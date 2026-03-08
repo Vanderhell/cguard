@@ -1,0 +1,140 @@
+name: CI
+
+on:
+  push:
+    branches: [ master, main ]
+  pull_request:
+    branches: [ master, main ]
+
+jobs:
+  # -------------------------------------------------------------------------
+  # Build & test on Linux (GCC + Clang, multiple C standards)
+  # -------------------------------------------------------------------------
+  test-linux:
+    name: "${{ matrix.compiler }} / C${{ matrix.std }} / ${{ matrix.os }}"
+    runs-on: ${{ matrix.os }}
+
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ ubuntu-22.04, ubuntu-24.04 ]
+        compiler: [ gcc, clang ]
+        std: [ "11", "17" ]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Clang
+        if: matrix.compiler == 'clang'
+        run: sudo apt-get install -y clang
+
+      - name: Build tests
+        run: |
+          make tests CC=${{ matrix.compiler }} CFLAGS="-std=c${{ matrix.std }} -Wall -Wextra -Wpedantic -I./include"
+
+      - name: Run tests
+        run: make run-tests CC=${{ matrix.compiler }} CFLAGS="-std=c${{ matrix.std }} -Wall -Wextra -Wpedantic -I./include"
+
+  # -------------------------------------------------------------------------
+  # Build & test on macOS (Apple Clang)
+  # -------------------------------------------------------------------------
+  test-macos:
+    name: "Apple Clang / macOS"
+    runs-on: macos-14
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build and run tests
+        run: make run-tests
+
+  # -------------------------------------------------------------------------
+  # CMake build (verifies install + FetchContent path works)
+  # -------------------------------------------------------------------------
+  cmake-build:
+    name: "CMake / ${{ matrix.os }}"
+    runs-on: ${{ matrix.os }}
+
+    strategy:
+      matrix:
+        os: [ ubuntu-22.04, macos-14 ]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure
+        run: |
+          cmake -B build \
+            -DCGUARD_BUILD_TESTS=ON \
+            -DCGUARD_BUILD_EXAMPLES=ON \
+            -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        run: cmake --build build
+
+      - name: Test
+        run: ctest --test-dir build --output-on-failure
+
+  # -------------------------------------------------------------------------
+  # Sanitizers (UBSan + ASan) — catches undefined behaviour and memory bugs
+  # -------------------------------------------------------------------------
+  sanitizers:
+    name: "Sanitizers (GCC, Ubuntu)"
+    runs-on: ubuntu-22.04
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build with ASan + UBSan
+        run: |
+          make tests \
+            CC=gcc \
+            CFLAGS="-std=c11 -Wall -Wextra -I./include -fsanitize=address,undefined -fno-omit-frame-pointer -g"
+
+      - name: Run tests under sanitizers
+        run: |
+          ASAN_OPTIONS=detect_leaks=1 \
+          UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=1 \
+          make run-tests \
+            CC=gcc \
+            CFLAGS="-std=c11 -Wall -Wextra -I./include -fsanitize=address,undefined -fno-omit-frame-pointer -g"
+
+  # -------------------------------------------------------------------------
+  # Valgrind (memory leak detection)
+  # -------------------------------------------------------------------------
+  valgrind:
+    name: "Valgrind"
+    runs-on: ubuntu-22.04
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Valgrind
+        run: sudo apt-get install -y valgrind
+
+      - name: Build tests
+        run: make tests CC=gcc CFLAGS="-std=c11 -g -I./include"
+
+      - name: Run under Valgrind
+        run: |
+          valgrind --leak-check=full --error-exitcode=1 ./build/test_scope_guard
+          valgrind --leak-check=full --error-exitcode=1 ./build/test_result
+
+  # -------------------------------------------------------------------------
+  # Check headers compile standalone (no missing includes)
+  # -------------------------------------------------------------------------
+  header-standalone:
+    name: "Headers compile standalone"
+    runs-on: ubuntu-22.04
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: scope_guard.h standalone
+        run: echo '#include "scope_guard.h"' | gcc -std=c11 -Wall -I./include -x c - -c -o /dev/null
+
+      - name: result.h standalone
+        run: echo '#include "result.h"' | gcc -std=c11 -Wall -I./include -x c - -c -o /dev/null
+
+      - name: cguard.h umbrella standalone
+        run: echo '#include "cguard.h"' | gcc -std=c11 -Wall -I./include -x c - -c -o /dev/null
