@@ -44,19 +44,21 @@ void example_basic(void) {
  * Example 2: Typed result RESULT(T)
  * ---------------------------------------------------------------------- */
 
-RESULT(int) parse_positive_int(const char *s) {
-    if (!s) return (RESULT(int)) RESULT_VAL_ERR(RESULT_ERR_NULL, "input is NULL");
+typedef RESULT(int) int_result_t;
+
+int_result_t parse_positive_int(const char *s) {
+    if (!s) return (int_result_t) RESULT_VAL_ERR(RESULT_ERR_NULL, "input is NULL");
 
     char *end;
     long val = strtol(s, &end, 10);
 
     if (end == s || *end != '\0')
-        return (RESULT(int)) RESULT_VAL_ERR(RESULT_ERR_INVAL, "not a valid integer");
+        return (int_result_t) RESULT_VAL_ERR(RESULT_ERR_INVAL, "not a valid integer");
 
     if (val <= 0)
-        return (RESULT(int)) RESULT_VAL_ERR(RESULT_ERR_INVAL, "must be positive");
+        return (int_result_t) RESULT_VAL_ERR(RESULT_ERR_INVAL, "must be positive");
 
-    return (RESULT(int)) RESULT_VAL_OK((int)val);
+    return (int_result_t) RESULT_VAL_OK((int)val);
 }
 
 void example_typed(void) {
@@ -65,7 +67,7 @@ void example_typed(void) {
     const char *inputs[] = { "42", "-5", "abc", NULL };
 
     for (int i = 0; i < 4; i++) {
-        RESULT(int) r = parse_positive_int(inputs[i]);
+        int_result_t r = parse_positive_int(inputs[i]);
         if (r.ok) {
             printf("  parse('%s') = %d\n", inputs[i], r.value);
         } else {
