@@ -1,147 +1,191 @@
-/**
- * @file test_result.c
- * @brief Unit tests for result.h
- */
-
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
 #include <errno.h>
-#include "result.h"
+#include <stdio.h>
+#include <string.h>
 
-static int _tests = 0, _passed = 0, _failed = 0;
+#include <cguard/result.h>
+
+static int tests_run = 0;
+static int tests_passed = 0;
+static int tests_failed = 0;
+
 #define TEST(name) static void name(void)
-#define RUN(name)  do { printf("  %-46s", #name); name(); } while(0)
-#define ASSERT(cond) do { \
-    _tests++; \
-    if (cond) { _passed++; printf("."); } \
-    else { _failed++; printf("\n  FAIL: %s:%d: %s\n", __FILE__, __LINE__, #cond); } \
-} while(0)
+#define RUN(name) do { printf("  %-40s", #name); name(); } while (0)
+#define ASSERT(cond)                                                          \
+    do {                                                                      \
+        ++tests_run;                                                          \
+        if (cond) {                                                           \
+            ++tests_passed;                                                   \
+            putchar('.');                                                     \
+        } else {                                                              \
+            ++tests_failed;                                                   \
+            printf("\n  FAIL: %s:%d: %s\n", __FILE__, __LINE__, #cond);      \
+        }                                                                     \
+    } while (0)
 
-/* --- helpers --- */
-static result_t fn_ok(void)  { return RESULT_OK_VAL(); }
-static result_t fn_err(void) { return RESULT_ERR_VAL(RESULT_ERR_IO); }
-static int chain_count = 0;
+static int result_call_count = 0;
 
-static result_t call_chain(void) {
-    chain_count = 0;
-    result_t r;
-    r = fn_ok();  chain_count++; RESULT_TRY(r);
-    r = fn_err(); chain_count++; RESULT_TRY(r);
-    r = fn_ok();  chain_count++;             /* should not run */
-    return RESULT_OK_VAL();
+static result_t ok_once(void) {
+    ++result_call_count;
+    return result_success();
 }
 
-typedef RESULT(int) int_result_t;
-
-static int_result_t parse_int(const char *s) {
-    if (!s) return (int_result_t){ .ok=false, .status=RESULT_ERR_NULL, .msg="null", .value=0 };
-    return (int_result_t) RESULT_VAL_OK(atoi(s));
+static result_t fail_once(void) {
+    ++result_call_count;
+    return result_failure(RESULT_ERR_IO, "io failed");
 }
 
-/* --- tests --- */
+RESULT_DEFINE(int_result_t, int);
+RESULT_DEFINE(pointer_result_t, char *);
 
-TEST(test_ok_val) {
-    result_t r = RESULT_OK_VAL();
-    ASSERT(r.ok == true);
-    ASSERT(r.status == RESULT_OK);
-    ASSERT(r.msg == NULL);
+typedef struct {
+    int x;
+    int y;
+} point_t;
+
+RESULT_DEFINE(point_result_t, point_t);
+
+static int_result_t parse_count(const char *text) {
+    if (text == NULL) {
+        return int_result_t_err(RESULT_ERR_NULL, "missing text");
+    }
+
+    return int_result_t_ok((int)strlen(text));
 }
 
-TEST(test_err_val) {
-    result_t r = RESULT_ERR_VAL(RESULT_ERR_IO);
-    ASSERT(r.ok == false);
-    ASSERT(r.status == RESULT_ERR_IO);
+static pointer_result_t duplicate_text(const char *text) {
+    if (text == NULL) {
+        return pointer_result_t_err(RESULT_ERR_NULL, "missing text");
+    }
+
+    return pointer_result_t_ok((char *)text);
 }
 
-TEST(test_err_msg) {
-    result_t r = RESULT_ERR_MSG(RESULT_ERR_INVAL, "bad arg");
-    ASSERT(r.ok == false);
-    ASSERT(r.status == RESULT_ERR_INVAL);
-    ASSERT(r.msg != NULL && strcmp(r.msg, "bad arg") == 0);
+static point_result_t make_point(int x, int y) {
+    point_t point = { x, y };
+    return point_result_t_ok(point);
 }
 
-TEST(test_typed_ok) {
-    int_result_t r = parse_int("99");
-    ASSERT(r.ok == true);
-    ASSERT(r.value == 99);
+static result_t propagate_chain(void) {
+    result_call_count = 0;
+    RESULT_TRY(ok_once());
+    RESULT_TRY(fail_once());
+    RESULT_TRY(ok_once());
+    return result_success();
 }
 
-TEST(test_typed_null) {
-    int_result_t r = parse_int(NULL);
-    ASSERT(r.ok == false);
-    ASSERT(r.status == RESULT_ERR_NULL);
+static result_t propagate_success(void) {
+    result_call_count = 0;
+    RESULT_TRY(ok_once());
+    return result_success();
 }
 
-TEST(test_try_stops_on_error) {
-    result_t r = call_chain();
-    ASSERT(r.ok == false);
-    ASSERT(r.status == RESULT_ERR_IO);
-    ASSERT(chain_count == 2);  /* third never reached */
+static result_t preserve_error_with_goto(void) {
+    result_t err = result_success();
+
+    RESULT_GOTO(err, fail_once(), cleanup);
+    return result_success();
+
+cleanup:
+    return err;
 }
 
-static result_t all_ok_chain(void) {
-    RESULT_TRY_CALL(fn_ok());
-    RESULT_TRY_CALL(fn_ok());
-    return RESULT_OK_VAL();
+TEST(test_constructor_invariants) {
+    result_t ok = result_success();
+    result_t err = result_failure(RESULT_ERR_IO, "broken");
+    result_t normalized = result_failure(RESULT_OK, "not allowed");
+
+    ASSERT(ok.status == RESULT_OK);
+    ASSERT(ok.message == NULL);
+    ASSERT(err.status == RESULT_ERR_IO);
+    ASSERT(err.message != NULL);
+    ASSERT(normalized.status != RESULT_OK);
 }
 
-TEST(test_try_call_ok) {
-    result_t r = all_ok_chain();
-    ASSERT(r.ok == true);
+TEST(test_named_scalar_result) {
+    int_result_t value = parse_count("abcd");
+
+    ASSERT(int_result_t_is_ok(value));
+    ASSERT(value.status == RESULT_OK);
+    ASSERT(value.value == 4);
 }
 
-TEST(test_status_str_ok) {
-    ASSERT(strcmp(result_status_str(RESULT_OK), "OK") == 0);
+TEST(test_named_pointer_result) {
+    pointer_result_t value = duplicate_text("hello");
+
+    ASSERT(pointer_result_t_is_ok(value));
+    ASSERT(value.value != NULL);
+    ASSERT(strcmp(value.value, "hello") == 0);
 }
 
-TEST(test_status_str_nomem) {
-    ASSERT(strcmp(result_status_str(RESULT_ERR_NOMEM), "Out of memory") == 0);
+TEST(test_named_struct_result) {
+    point_result_t value = make_point(3, 7);
+
+    ASSERT(point_result_t_is_ok(value));
+    ASSERT(value.value.x == 3);
+    ASSERT(value.value.y == 7);
 }
 
-TEST(test_status_str_unknown) {
-    ASSERT(strcmp(result_status_str((result_status_t)-999), "Unknown error") == 0);
+TEST(test_propagation_once_on_error) {
+    result_t value = propagate_chain();
+
+    ASSERT(result_call_count == 2);
+    ASSERT(value.status == RESULT_ERR_IO);
+    ASSERT(strcmp(value.message, "io failed") == 0);
 }
 
-TEST(test_from_errno_ok) {
-    result_t r = result_from_errno(0);
-    ASSERT(r.ok == true);
+TEST(test_propagation_once_on_success) {
+    result_t value = propagate_success();
+
+    ASSERT(result_call_count == 1);
+    ASSERT(value.status == RESULT_OK);
 }
 
-TEST(test_from_errno_nomem) {
-    result_t r = result_from_errno(ENOMEM);
-    ASSERT(r.ok == false && r.status == RESULT_ERR_NOMEM);
-    ASSERT(r.msg != NULL);
+TEST(test_goto_preserves_original_error) {
+    result_t value = preserve_error_with_goto();
+
+    ASSERT(value.status == RESULT_ERR_IO);
+    ASSERT(strcmp(value.message, "io failed") == 0);
 }
 
-TEST(test_from_errno_enoent) {
-    result_t r = result_from_errno(ENOENT);
-    ASSERT(r.ok == false && r.status == RESULT_ERR_NOT_FOUND);
+TEST(test_errno_mapping_and_buffer) {
+    char buffer[64];
+    result_t value = result_from_errno_buffer(ENOENT, buffer, sizeof(buffer));
+
+    ASSERT(value.status == RESULT_ERR_NOT_FOUND);
+    ASSERT(value.message == buffer);
+    ASSERT(buffer[0] != '\0');
 }
 
-TEST(test_from_errno_eacces) {
-    result_t r = result_from_errno(EACCES);
-    ASSERT(r.ok == false && r.status == RESULT_ERR_PERMISSION);
+TEST(test_errno_default_storage) {
+    result_t value = result_from_errno(EINVAL);
+
+    ASSERT(value.status == RESULT_ERR_INVAL);
+    ASSERT(value.message != NULL);
+}
+
+TEST(test_status_strings) {
+    ASSERT(strcmp(result_status_string(RESULT_ERR_BUSY), "busy") == 0);
+    ASSERT(strcmp(result_status_string((result_status_t)-12345), "unknown") == 0);
 }
 
 int main(void) {
     puts("=== test_result ===\n");
-    RUN(test_ok_val);              puts("");
-    RUN(test_err_val);             puts("");
-    RUN(test_err_msg);             puts("");
-    RUN(test_typed_ok);            puts("");
-    RUN(test_typed_null);          puts("");
-    RUN(test_try_stops_on_error);  puts("");
-    RUN(test_try_call_ok);         puts("");
-    RUN(test_status_str_ok);       puts("");
-    RUN(test_status_str_nomem);    puts("");
-    RUN(test_status_str_unknown);  puts("");
-    RUN(test_from_errno_ok);       puts("");
-    RUN(test_from_errno_nomem);    puts("");
-    RUN(test_from_errno_enoent);   puts("");
-    RUN(test_from_errno_eacces);   puts("");
-    printf("\n=== Results: %d/%d passed", _passed, _tests);
-    if (_failed) printf(", %d FAILED", _failed);
+
+    RUN(test_constructor_invariants); puts("");
+    RUN(test_named_scalar_result); puts("");
+    RUN(test_named_pointer_result); puts("");
+    RUN(test_named_struct_result); puts("");
+    RUN(test_propagation_once_on_error); puts("");
+    RUN(test_propagation_once_on_success); puts("");
+    RUN(test_goto_preserves_original_error); puts("");
+    RUN(test_errno_mapping_and_buffer); puts("");
+    RUN(test_errno_default_storage); puts("");
+    RUN(test_status_strings); puts("");
+
+    printf("\n=== Results: %d/%d passed", tests_passed, tests_run);
+    if (tests_failed != 0) {
+        printf(", %d FAILED", tests_failed);
+    }
     puts(" ===");
-    return _failed ? 1 : 0;
+    return tests_failed == 0 ? 0 : 1;
 }

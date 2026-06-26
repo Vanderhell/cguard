@@ -24,3 +24,16 @@ CTestTestfile.cmake
 
 # Test output
 /tmp/cguard_*
+/prompts
+/build-wsl-clang-debug
+/build-wsl-clang-release
+/build-wsl-consumer-fetch
+/build-wsl-consumer-install
+/build-wsl-gcc-debug
+/build-wsl-gcc-release
+/build-wsl-sanitize
+/build-clangcl
+/build-test
+/build-clang-release
+build-release/example_result.dir/Release/example_result.tlog/link.write.1.tlog
+/build-release
