@@ -37,3 +37,7 @@ CTestTestfile.cmake
 /build-clang-release
 build-release/example_result.dir/Release/example_result.tlog/link.write.1.tlog
 /build-release
+/build-msvc-debug
+/build-msvc-release
+/build-clangcl-debug
+/build-clangcl-release
